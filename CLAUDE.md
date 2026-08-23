@@ -21,7 +21,7 @@ Pipeline order:
 | Stage | Notebook | Purpose |
 |---|---|---|
 | 0 | `Step_0_Dataset_Preparation.ipynb` | Indexes nuScenes samples; writes `samples_index.json`, the master index every downstream step reads |
-| 1.1 | `Step_1_1_Camera_Preprocessing.ipynb` | Camera calibration/intrinsics per sample; defines `project_point_to_camera()`, the shared 3D→image projection utility reused in Steps 2.3.1, 3.3, 6 |
+| 1.1 | `Step_1_1_Camera_Preprocessing.ipynb` | Camera calibration/intrinsics per sample; imports `project_point_to_camera()` from `src/geometry.py` |
 | 1.2 | `Step_1_2_Radar_Parsing.ipynb` | Parses raw radar point clouds per channel |
 | 1.3 | `Step_1_3_LiDAR_Parsing.ipynb` | Parses raw LiDAR point clouds (N×7 arrays: point + derived fields) |
 | 2.1 | `Step_2_1_LiDAR_Processing.ipynb` | Ground-plane removal (Open3D `segment_plane`) + DBSCAN clustering |
@@ -43,6 +43,8 @@ Each notebook's first markdown cell documents its own **Input / Outputs / Used b
 
 **`config.py` is the single source of truth for all paths.** Every notebook starts by importing from it (e.g. `from config import STEP0_DIR, STEP1_DIR, ...`). It anchors `PROJECT_ROOT`/`BASE_DIR` to its own file location (not the Jupyter CWD), points `DATA_ROOT` at the nuScenes dataset, and derives one output subdirectory per stage (`STEP0_DIR` … `STEP6_DIR`) under `output/`. **Change dataset/output locations only in `config.py`** — never hardcode paths inside a notebook.
 
+**`src/geometry.py`** holds the sensor-to-global and global-to-camera coordinate transform math (`transform_matrix`, `point_to_global`, `points_to_global`, `project_point_to_camera`, `global_points_to_camera`). This used to be copy-pasted independently into Steps 1.1, 2.3.1, 3.1, and 3.2; those notebooks now `from src.geometry import ...` instead. Step 3.1 imports `point_to_global` under the alias `centroid_to_global` to match its existing call sites. If you touch this file, all four notebooks are affected — re-run them to confirm. `GlobalFrameTracker` (Step 3.1 vs 3.2) and `compute_ttc` (Step 5 vs Step 6) are similarly duplicated but were *not* unified — their implementations have diverged enough (radar-specific tuning, ground-truth-specific lookups) that merging them needs a closer read than a mechanical extraction; treat that as a known follow-up, not an oversight.
+
 Data flow is entirely file-based: each stage reads JSON/CSV/NPY files written by the prior stage under `output/step_N/...` and writes its own under `output/step_(N+1)/...`; there is no in-memory hand-off between notebooks. Key artifacts:
 - `output/step_0/samples_index.json` — master sample index, read by nearly every later stage.
 - `output/step_1/lidar/<sample>/lidar_raw.npy` — per-point LiDAR array (N×7).
@@ -51,8 +53,10 @@ Data flow is entirely file-based: each stage reads JSON/CSV/NPY files written by
 - `output/step_4/fused/track_<id>.json` and `fused_tracks_all.csv` — fused multi-sensor tracks.
 - `output/step_5/ttc_{lidar,radar,camera,fused}.csv` — same schema across sensors, directly comparable.
 
-`html/` holds rendered HTML exports of each notebook (for viewing without Jupyter) and is regenerated from the notebooks, not hand-edited. `archive/` and `Old Codes/` hold prior notebook revisions and an old zipped copy of the project kept for reference — do not treat them as current; the root-level `Step_*.ipynb` files are canonical.
+`html/` holds rendered HTML exports of each notebook (for viewing without Jupyter) and is regenerated from the notebooks, not hand-edited. `archive/` and `Old Codes/` hold prior notebook revisions and an old zipped copy of the project kept for reference — do not treat them as current; the root-level `Step_*.ipynb` files are canonical. `assets/` holds a small set of result images copied from `output/` and committed for the README — it's curated by hand, not regenerated automatically, so re-copy into it manually after a pipeline run if you want the README images refreshed.
+
+`output/`, `DATA SET/`, `html/`, `archive/`, and `Old Codes/` are gitignored (see `.gitignore`); `assets/` is intentionally not.
 
 ## Dependencies
 
-No `requirements.txt`/`environment.yml` exists in the repo; the working set of libraries (inferred from notebook imports) is: `nuscenes-devkit` (`nuscenes`, `pyquaternion`), `open3d`, `ultralytics` (YOLO), `torch`, `opencv-python` (`cv2`), `scikit-learn`, `scipy`, `numpy`, `pandas`, `matplotlib`, `tqdm`, `Pillow`.
+`requirements.txt` pins the working set of libraries: `nuscenes-devkit` (`nuscenes`, `pyquaternion`), `open3d`, `ultralytics` (YOLO), `torch`/`torchvision`, `opencv-python` (`cv2`), `scikit-learn`, `scipy`, `numpy`, `pandas`, `matplotlib`, `tqdm`, `Pillow`. Install with `pip install -r requirements.txt`.

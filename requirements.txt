@@ -1,0 +1,22 @@
+# Core numerical / data
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+scikit-learn==1.5.1
+matplotlib==3.9.2
+pillow>=10.0
+tqdm>=4.66
+
+# Sensor fusion / geometry
+nuscenes-devkit==1.2.0
+pyquaternion==0.9.9
+open3d==0.19.0
+
+# Detection / deep learning
+torch==2.6.0
+torchvision==0.21.0
+ultralytics==8.4.114
+opencv-python==4.10.0.84
+
+# Notebook execution
+jupyter
