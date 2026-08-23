@@ -23,3 +23,6 @@ __pycache__/
 
 # Misc scratch
 nb_summary.txt
+
+# Claude Code local runtime state (not project content)
+.claude/

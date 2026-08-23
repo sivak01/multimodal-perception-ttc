@@ -28,8 +28,8 @@ Pipeline order:
 | 2.2 | `Step_2_2_Radar_Processing.ipynb` | Radar filtering (dynamic-property filter) + feature extraction (raw + ego-compensated velocity) |
 | 2.3 | `Step_2_3_YOLOv5.ipynb` | YOLO 2D object detection on camera frames (uses `ultralytics`, weights in `yolov8n.pt`) |
 | 2.3.1 | `Step_2_3_1_YOLO_Global_Projection.ipynb` | Lifts each 2D YOLO box to a 3D global-frame position by fusing with LiDAR |
-| 3.1 | `Step_3_1_LiDAR_Fusion.ipynb` | Multi-frame LiDAR tracking (nearest-neighbor / Hungarian assignment via `scipy.optimize.linear_sum_assignment`), global frame, no filter yet |
-| 3.2 | `Step_3_2_Radar_Fusion.ipynb` | Multi-frame radar tracking, same family as 3.1 |
+| 3.1 | `Step_3_1_LiDAR_Fusion.ipynb` | Multi-frame LiDAR tracking (nearest-neighbor / Hungarian assignment via `scipy.optimize.linear_sum_assignment`), global frame |
+| 3.2 | `Step_3_2_Radar_Fusion.ipynb` | Multi-frame radar tracking, same family as 3.1; clusters multi-blip radar returns into one detection per object before tracking |
 | 3.3 | `Step_3_3_Camera_Tracker.ipynb` | Multi-frame camera tracking, global 3D nearest-neighbor across all 6 cameras |
 | 4 | `Step_4_Fusion.ipynb` | Fuses LiDAR/radar/camera tracks into unified tracks |
 | 5 | `Step_5_TTC.ipynb` | UKF + CTRV motion model → TTC estimate per track, per sensor and fused |
@@ -58,6 +58,30 @@ Data flow is entirely file-based: each stage reads JSON/CSV/NPY files written by
 `html/` holds rendered HTML exports of each notebook (for viewing without Jupyter) and is regenerated from the notebooks, not hand-edited. `archive/` and `Old Codes/` hold prior notebook revisions and an old zipped copy of the project kept for reference — do not treat them as current; the root-level `Step_*.ipynb` files are canonical. `assets/` holds a small set of result images copied from `output/` and committed for the README — it's curated by hand, not regenerated automatically, so re-copy into it manually after a pipeline run if you want the README images refreshed.
 
 `output/`, `DATA SET/`, `html/`, `archive/`, and `Old Codes/` are gitignored (see `.gitignore`); `assets/` is intentionally not.
+
+## Known data-quality fixes and their measured effect
+
+These were identified by auditing pipeline behavior against actual code (not assumed), then verified by re-running the affected notebooks end-to-end:
+
+- **Radar declutter** (`Step_2_2_Radar_Processing.ipynb`): the `dyn_prop` filter only excluded value `7`; the nuScenes enum has several other "not really moving" values (`1` stationary, `3` stationary candidate, `4` unknown, `5` crossing stationary). Now keeps only `{0, 2, 6}` (moving/oncoming/crossing-moving — the devkit's own recommended set for "moving objects only"). Effect: ~158 → ~27.5 kept detections/sample.
+- **Radar blip clustering** (`Step_3_2_Radar_Fusion.ipynb`): one real object produces 3–8 separate radar blips; there was no grouping step before tracking. DBSCAN (`RADAR_CLUSTER_EPS = 1.5m`, `min_samples=1`) now groups blips into one centroid per object before they reach `GlobalFrameTracker`.
+- **LiDAR cluster shape filter** (`Step_2_1_LiDAR_Processing.ipynb`, optional/lowest-priority): discards DBSCAN clusters whose bounding box is implausible for a vehicle/pedestrian (`CLUSTER_MIN_HEIGHT_M`/`MAX_HEIGHT_M`/`MAX_HORIZONTAL_EXTENT_M`/`MAX_ASPECT_RATIO` in the cell) — filters out curbs, hedges, wall fragments. Effect: ~66.3 → ~44.0 clusters/sample.
+- **YOLO class/confidence filter** (`Step_2_3_YOLOv5.ipynb`): was `model.classes = None` (all 80 COCO classes) at `conf=0.25`. Now `model.classes = [0,1,2,3,5,7]` (person/bicycle/car/motorcycle/bus/truck only) at `conf=0.35`.
+- **Fusion merge Bug A** (`Step_4_Fusion.ipynb`, `merge_frame_observations()`): nothing prevented two detections from the *same* sensor from being merged together (e.g. two real pedestrians seen only by LiDAR could get squashed into one). Fixed: the union edge now requires different sensors.
+- **Fusion merge Bug B**: the old pass was greedy (single forward scan), not a real union-find, so a chain of 3+ pairwise-close detections split into multiple clusters instead of one. Fixed with a proper disjoint-set union — verified by unit test (3 collinear points, 2m apart, `merge_thresh=3` → now one cluster, not `{p0,p1}` + `{p2}`).
+- **Fusion averaging weighted by sensor trust**: was a flat `np.mean` over merged positions, treating LiDAR/radar/camera as equally accurate. `SENSOR_TRUST_WEIGHT = {"lidar": 44, "radar": 4, "camera": 1}` (inverse-variance-style, from ~0.15m/~0.5m/~1.0m assumed position noise) now weights the merge — verified by unit test (LiDAR+radar 1m apart merges to 91.7% toward LiDAR, as the weight ratio implies).
+- **Evaluation scorecard** (`Step_6_Visualization.ipynb`, `compute_evaluation_metrics()`): `n_tracks_matched`/`n_tracks_total` were computed and printed to console but never added to the returned dict, so they never reached `evaluation_metrics.csv` — now included as `N_Tracks_Total`/`N_Tracks_GT_Matched`. The console message *"tracks found a GT lock at their first frame"* was misleading — `match_predictions_to_ground_truth()` actually retries the lock attempt every frame until one succeeds, not only frame 1; message text corrected. Added a sanity check that warns if two sensors report suspiciously identical `n_matched_pairs`.
+
+**Important finding — fusion got worse, not better, after all of the above.** Full before → after (`output/step_6/evaluation_metrics.csv`):
+
+| Sensor | MAE before→after | RMSE before→after | Good_pct before→after |
+|---|---|---|---|
+| lidar | 3.85→3.57 | 7.97→7.60 | 49.0→50.9 |
+| radar | 3.38→3.79 | 7.62→8.13 | 52.8→49.2 |
+| camera | 2.83→2.73 | 5.98→5.57 | 54.7→52.9 |
+| fused | 3.83→4.20 | 7.93→8.84 | 47.2→46.0 |
+
+Camera alone is the best sensor by a clear and now-larger margin. The weighted-average merge function was unit-tested and is mathematically correct — the regression is not an implementation bug in that function. Only ~6.3% of fused track points actually combine 2+ sensors (the rest are single-sensor pass-through), and the fused pool's GT-lock rate (27.7%) is the lowest of all four sensors, well below camera's (91%) — consistent with per-frame sensor availability changing which sensors get merged, making a fused track's position jump frame-to-frame in a way single-sensor tracking doesn't. **Takeaway: this pipeline's per-frame spatial-weighted-average fusion is architecturally limited — the fix needed is temporal filtering (e.g. a real Kalman-style fusion across time), not another merge-step bug fix.** Don't assume "add sensor weighting" alone will make fusion beat the best individual sensor here; it didn't.
 
 ## Dependencies
 
