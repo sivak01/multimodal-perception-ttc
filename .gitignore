@@ -21,6 +21,9 @@ __pycache__/
 # Jupyter
 .ipynb_checkpoints/
 
+# Pytest
+.pytest_cache/
+
 # Misc scratch
 nb_summary.txt
 

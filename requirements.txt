@@ -20,3 +20,6 @@ opencv-python==4.10.0.84
 
 # Notebook execution
 jupyter
+
+# Tests
+pytest>=7.4

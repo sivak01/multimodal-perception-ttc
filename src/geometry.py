@@ -5,6 +5,8 @@
 # (four independent copies of the same nuScenes transform-chain math). They now
 # live here once; each notebook imports what it needs.
 
+import warnings
+
 import numpy as np
 from pyquaternion import Quaternion
 
@@ -110,13 +112,39 @@ def project_point_to_camera(point_xyz,
     return (u, v, depth)
 
 
+# Below this mean per-point magnitude (metres), points look like a raw sensor-local
+# cloud rather than nuScenes global-frame coordinates. Calibrated against this repo's
+# actual data: a typical LIDAR_TOP sweep has mean |xyz| ~10m (median ~6m), while this
+# dataset's global frame sits around 1100-1250m from origin — a 100m cutoff sits well
+# clear of both, so it won't false-negative on real local point clouds.
+_LOCAL_FRAME_MAGNITUDE_WARN_THRESHOLD_M = 100.0
+
+
 def global_points_to_camera(points_global, cam_ego_pose, cam_calibrated_sensor,
                              camera_intrinsic, image_width=1600, image_height=900):
     """
     Batch: global frame (N,3) -> camera pixel (u, v, depth).
     Returns arrays of shape (N,) for u, v, depth, and a boolean valid mask
     (in front of camera AND inside image bounds).
+
+    points_global MUST already be in the global frame (e.g. via point_to_global /
+    points_to_global) — this function has no way to detect a sensor-local point cloud
+    passed in by mistake and will silently produce plausible-looking (u, v) pixels
+    for it. As a cheap sanity net, a suspiciously small mean magnitude (typical of a
+    raw local sweep, atypical for this dataset's global frame) triggers a warning —
+    it does not raise, since a legitimately close-to-global-origin point set is
+    possible in principle.
     """
+    if len(points_global) > 0:
+        mean_mag = float(np.mean(np.linalg.norm(points_global, axis=1)))
+        if mean_mag < _LOCAL_FRAME_MAGNITUDE_WARN_THRESHOLD_M:
+            warnings.warn(
+                f"global_points_to_camera: input points have mean |xyz|={mean_mag:.1f}m, "
+                f"well below this dataset's typical global-frame magnitude — did you forget "
+                f"to call points_to_global() first? (points_global must already be global-frame)",
+                stacklevel=2,
+            )
+
     N = points_global.shape[0]
     points_h = np.hstack([points_global, np.ones((N, 1))]).T   # (4, N)
 
@@ -124,6 +152,54 @@ def global_points_to_camera(points_global, cam_ego_pose, cam_calibrated_sensor,
     T4 = transform_matrix(cam_calibrated_sensor["translation"], cam_calibrated_sensor["rotation"], inverse=True)
 
     points_cam = (T4 @ (T3 @ points_h))[:3]   # (3, N)
+    depth = points_cam[2, :]
+
+    K = np.array(camera_intrinsic)
+    pixel = K @ points_cam
+    with np.errstate(divide='ignore', invalid='ignore'):
+        u = pixel[0, :] / pixel[2, :]
+        v = pixel[1, :] / pixel[2, :]
+
+    valid = (depth > 0) & (u >= 0) & (u < image_width) & (v >= 0) & (v < image_height)
+    return u, v, depth, valid
+
+
+def project_points_to_camera_batch(points_local, src_ego_pose, src_calibrated_sensor,
+                                    cam_ego_pose, cam_calibrated_sensor,
+                                    camera_intrinsic, image_width=1600, image_height=900):
+    """
+    Batch-safe equivalent of project_point_to_camera() for many points sharing the
+    SAME source/camera pose (e.g. one LiDAR sweep projected onto one camera image).
+
+    project_point_to_camera() rebuilds all four transform matrices (T1-T4) from
+    scratch on every call, which is fine for a single interactive point but wasteful
+    in a loop — the same quaternion-to-rotation-matrix work gets redone per point.
+    This function computes T1-T4 once, combines them into a single 4x4 matrix, and
+    applies it to all N points in one matrix multiply.
+
+    points_local: (N,3) array, in the SOURCE sensor's own local frame (same
+    convention as project_point_to_camera's point_xyz — NOT global-frame; for
+    already-global points use global_points_to_camera instead).
+
+    Returns arrays of shape (N,) for u, v, depth, and a boolean valid mask (in front
+    of camera AND inside image bounds) — same contract as global_points_to_camera().
+    """
+    points_local = np.asarray(points_local, dtype=float)
+    N = points_local.shape[0]
+    if N == 0:
+        empty = np.empty(0)
+        return empty, empty, empty, empty.astype(bool)
+
+    points_h = np.hstack([points_local, np.ones((N, 1))]).T   # (4, N)
+
+    T1 = transform_matrix(src_calibrated_sensor["translation"], src_calibrated_sensor["rotation"])
+    T2 = transform_matrix(src_ego_pose["translation"], src_ego_pose["rotation"])
+    T3 = transform_matrix(cam_ego_pose["translation"], cam_ego_pose["rotation"], inverse=True)
+    T4 = transform_matrix(cam_calibrated_sensor["translation"], cam_calibrated_sensor["rotation"], inverse=True)
+
+    # Same five-step chain as project_point_to_camera, precomputed into one matrix.
+    M = T4 @ T3 @ T2 @ T1
+    points_cam = (M @ points_h)[:3]   # (3, N)
     depth = points_cam[2, :]
 
     K = np.array(camera_intrinsic)
