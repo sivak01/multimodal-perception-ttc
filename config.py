@@ -32,6 +32,19 @@ for d in [STEP0_DIR, STEP1_DIR, STEP2_DIR,
           STEP3_DIR, STEP4_DIR, STEP5_DIR, STEP6_DIR, ARCHIVE_ROOT]:
     d.mkdir(parents=True, exist_ok=True)
 
+# ── Shared sensor trust weights ─────────────────────────────
+# Inverse-variance-style trust weights (weight ~ 1/sigma^2) from each sensor's
+# approximate positional accuracy (LiDAR ~0.15m, radar sloppier laterally
+# ~0.5m, camera-derived range least precise, especially for far objects
+# ~1.0m -- verified against this pipeline's own measured camera vs.
+# camera-mono position error ratio, ~1.23x, consistent with this value).
+# Shared by Step 4 (per-sensor UKF smoothing + cross-sensor merge weighting)
+# and Step 5 (single-sensor UKF measurement noise) so the two can't silently
+# drift apart -- this pipeline has already hit that failure class twice
+# (radar's dyn_prop/velocity field mixups, the ["points"] unwrap breaking
+# across notebooks after a format change).
+SENSOR_TRUST_WEIGHT = {"lidar": 44.0, "radar": 4.0, "camera": 1.0}
+
 print(f"config.py loaded. PROJECT_ROOT = {PROJECT_ROOT}")
 print(f"DATA_ROOT   = {DATA_ROOT}")
 print(f"OUTPUT_ROOT = {OUTPUT_ROOT}")
