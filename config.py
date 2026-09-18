@@ -34,16 +34,30 @@ for d in [STEP0_DIR, STEP1_DIR, STEP2_DIR,
 
 # ── Shared sensor trust weights ─────────────────────────────
 # Inverse-variance-style trust weights (weight ~ 1/sigma^2) from each sensor's
-# approximate positional accuracy (LiDAR ~0.15m, radar sloppier laterally
-# ~0.5m, camera-derived range least precise, especially for far objects
-# ~1.0m -- verified against this pipeline's own measured camera vs.
-# camera-mono position error ratio, ~1.23x, consistent with this value).
+# approximate positional accuracy. LiDAR (0.15m) and radar (0.5m) are still
+# textbook engineering estimates, NOT measured from this dataset -- a direct
+# measurement (matched-track position vs. sample_annotation ground truth,
+# robust MAD-based sigma) was attempted, but for these two sensors the
+# measurement itself is unusable: LiDAR/radar's much higher track
+# fragmentation (4.1x / 2.4x vs. ~695 real objects) means enough short
+# tracks lock onto the WRONG nearby vehicle in dense traffic that even a
+# robust (MAD) estimator doesn't recover a plausible number (median position
+# "error" came out ~2.0m for both, physically implausible for LiDAR) --
+# only ~86% of matched points are real inliers, not the >97% robust
+# statistics assume. Using that measurement would make LiDAR/radar LESS
+# trusted than this hand-picked estimate, contradicting known sensor
+# physics. Camera and camera-mono do NOT have this problem (94-95% inlier
+# rate -- far less fragmented, high own GT-lock rate) so their values below
+# ARE measured: camera 0.90m (var 0.81, weight 1.23 -- was 1.0m/1.0/1.0,
+# a real but modest correction) and camera-mono 1.30m (var 1.70, weight
+# 0.59 -- previously not in this dict at all, silently defaulting to
+# camera's trust level via a fallback and understating its true noise).
 # Shared by Step 4 (per-sensor UKF smoothing + cross-sensor merge weighting)
 # and Step 5 (single-sensor UKF measurement noise) so the two can't silently
 # drift apart -- this pipeline has already hit that failure class twice
 # (radar's dyn_prop/velocity field mixups, the ["points"] unwrap breaking
 # across notebooks after a format change).
-SENSOR_TRUST_WEIGHT = {"lidar": 44.0, "radar": 4.0, "camera": 1.0}
+SENSOR_TRUST_WEIGHT = {"lidar": 44.0, "radar": 4.0, "camera": 1.23, "camera_mono": 0.59}
 
 print(f"config.py loaded. PROJECT_ROOT = {PROJECT_ROOT}")
 print(f"DATA_ROOT   = {DATA_ROOT}")
