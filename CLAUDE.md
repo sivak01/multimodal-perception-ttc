@@ -178,6 +178,32 @@ A second audit pass, prompted by an external review of the fusion design, worked
 
 Fused multi-sensor-merged points (2+ sensors combined): MAE 2.65, n=714 (25.7% of matched pairs). Single-sensor passthrough: MAE 4.73, n=1576. Fused still trails LiDAR alone — the composition breakdown remains the direct evidence of why (per the sensor-coverage-ceiling finding above, this isn't fixable by further merge-threshold or weighting-precision tuning; it would need either more genuinely new information sources, per the radar-velocity result, or better association quality, per the NIS finding).
 
+## Verdict, noise floor, and per-change ablation (does fusion actually win, and which of the 11 changes did what)
+
+The second audit round above bundled 11 changes into one commit (`3c529eb`), which made it impossible to credit or blame any one of them individually, and never stated plainly whether the end result actually beats the best single sensor. Both gaps are closed here by (1) measuring the run-to-run noise floor directly, and (2) reconstructing the round change-by-change from the pre-round baseline (`6b820f9`) by checking out that commit, replaying each change's code in isolation via the same edit scripts originally used to write it, and re-running Steps 3→6 after every step — with the final replayed step cross-checked against the real committed output as a fidelity check (it reproduced every number exactly, including `n_matched_pairs=2290 = 714+1576`, confirming the reconstruction is faithful).
+
+**Noise floor: exactly zero.** The entire pipeline (DBSCAN, Hungarian assignment, the UKF/CTRV math) is deterministic. Running Steps 3→6 twice in a row on identical code and input produced a byte-identical `evaluation_metrics.csv` both times; the only difference anywhere was the random `uuid.uuid4()` track-ID *labels* in `fused_tracks_all.csv` (cosmetic identifiers, not the underlying positions/velocities/errors). This means every MAE/RMSE difference in the table below is a real effect of the code change in that row, not run-to-run noise.
+
+**Verdict: no, fused does not beat the best individual sensor.** Current committed state: fused MAE **4.08** vs. LiDAR **3.79** (fused is 7.6% worse) and camera **2.87** (fused is 42% worse). Fused does edge out radar (4.32) and camera_mono (3.83) — the two weakest individual sensors — which is expected: fused is a trust-weighted blend that includes those weaker sensors' contributions.
+
+**Per-change ablation** (fused MAE/RMSE/tracks/matched-pairs after each change is added on top of the previous row; lidar/radar MAE called out whenever they moved, since fused's number alone hides which underlying sensor caused the shift):
+
+| # | Change | Fused MAE | Fused RMSE | Fused tracks | Matched pairs | LiDAR MAE | Radar MAE |
+|---|---|---|---|---|---|---|---|
+| 0 | Baseline, pre-round | 3.81 | 8.12 | 3905 | 2466 | 3.54 | 5.53 |
+| 1 | Camera double-counting fix (camera_mono swap) + `FusedTracker` rewrite (adaptive gate + velocity-based prediction blending) — bundled, one atomic rewrite originally | 4.00 | 8.36 | 3630 | 2511 | 3.54 | 5.53 |
+| 2 | LiDAR `GATE_SPEED_FACTOR` 0.5→0.7 | 4.01 | 8.42 | 3616 | 2526 | 3.54 | 5.53 |
+| 3 | Merge threshold 2.5m→3.5m (**tried**) | 4.18 | 8.80 | 3390 | 2093 | 3.54 | 5.53 |
+| 3b | Reverted to 2.5m (net zero vs. row 2) | 4.01 | 8.42 | 3616 | 2526 | 3.54 | 5.53 |
+| 4 | Radar Doppler velocity wired into Step 3.2/4/5 | 4.01 | 8.41 | 3633 | 2526 | 3.54 | **3.80** |
+| 5 | Decoupled position/velocity trust weights | 4.02 | 8.43 | 3632 | 2524 | 3.54 | 3.80 |
+| 6 | Track confirmation (M-of-N, all 3 trackers) | **3.96** | 8.10 | 3058 | 2259 | **3.79** | **4.30** |
+| 7 | Fabricated-velocity flag (verified exactly inert — identical to row 6 in every column) | 3.96 | 8.10 | 3058 | 2259 | 3.79 | 4.30 |
+| 8 | Sensor-specific initial velocity variance | 4.05 | 8.36 | 3074 | 2253 | 3.79 | 4.32 |
+| 9 | Covariance-based merge weighting (= current committed state) | **4.08** | 8.39 | 3079 | 2290 | 3.79 | 4.32 |
+
+**The honest reading of this table, which the aggregate "flat" framing in the section above obscured: the round's net effect on fused was a 7% regression (3.81→4.08), not a wash.** Exactly one change (row 4, radar velocity) was an unambiguous win, cutting radar's own standalone MAE by 31% (5.53→3.80) — but it barely moved fused (4.01→4.01) because LiDAR still dominates the merge. Every other change either directly hurt fused (rows 1, 2, 8, 9 each added a bit) or helped fused's own number while making the underlying single-sensor trackers *worse* (row 6: fused improved 4.02→3.96, but only by fragmenting LiDAR and radar's own tracks harder, pushing their standalone MAE up 3.54→3.79 and 3.80→4.30 respectively). Rows 8 and 9 (initial-variance realism, covariance-based weighting) were each justified on their own as genuine correctness fixes rather than tuning, and each was individually small — but both happened to push fused the same direction, and together they undid all of row 6's fused-side gain and then some, landing 0.12 above where row 6 left it. None of this means the individual fixes were wrong — each was verified correct on its own terms (see the second-audit-round section above for why each was kept despite a flat or negative measured effect) — but "kept several defensible fixes whose small effects happened to compound in the same direction" is a different, more specific claim than "the round was roughly a wash," and the per-change table is what makes that visible.
+
 ## Dependencies
 
 `requirements.txt` pins the working set of libraries: `nuscenes-devkit` (`nuscenes`, `pyquaternion`), `open3d`, `ultralytics` (YOLO), `torch`/`torchvision`, `opencv-python` (`cv2`), `scikit-learn`, `scipy`, `numpy`, `pandas`, `matplotlib`, `tqdm`, `Pillow`. Install with `pip install -r requirements.txt`.
