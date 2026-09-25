@@ -59,6 +59,45 @@ for d in [STEP0_DIR, STEP1_DIR, STEP2_DIR,
 # across notebooks after a format change).
 SENSOR_TRUST_WEIGHT = {"lidar": 44.0, "radar": 4.0, "camera": 1.23, "camera_mono": 0.59}
 
+# Radar's own ego-motion-compensated Doppler velocity (vx_comp/vy_comp) --
+# parsed and stored back in Step 2.2 but never consumed anywhere until Step
+# 3.2/Step 4 were fixed to use it. Assumed (~1.0 m/s std, literature-typical
+# for automotive radar Doppler-derived vx/vy), NOT independently measured --
+# same honesty convention as SENSOR_NOISE_VAR/SENSOR_TRUST_WEIGHT's own
+# lidar/radar position entries. Used as the UKF's velocity-measurement R
+# when smoothing a radar track (Step 4's smooth_track_states()).
+RADAR_VELOCITY_NOISE_VAR = 1.0   # (m/s)^2
+
+# Decoupled position vs velocity trust, for the cross-sensor MERGE step
+# specifically (Step 4's merge_frame_observations()). SENSOR_TRUST_WEIGHT
+# above is a POSITION weight -- using it for velocity too (the pipeline's
+# original behaviour) silently assumes a sensor's velocity accuracy always
+# tracks its position accuracy, which is false for radar: it measures
+# velocity directly (Doppler) but position only indirectly (angle+range),
+# the opposite of lidar/camera_mono, whose velocity is entirely DERIVED
+# from differencing their own position measurements over time (no separate
+# velocity sensor of their own).
+#
+# lidar/camera_mono's velocity weight is back-of-envelope-derived from
+# their own position variance (1/SENSOR_TRUST_WEIGHT) propagated through a
+# 2-point finite difference at this pipeline's ~0.5s (2Hz) sample cadence
+# (var_v ~= 2*var_pos/dt^2) -- NOT independently measured, and the real
+# UKF-converged velocity variance is typically tighter than this raw
+# 2-point estimate, so treat this as an approximate, order-of-magnitude
+# starting point, not a calibrated number. radar's velocity weight is
+# simply 1/RADAR_VELOCITY_NOISE_VAR, its own direct measurement's assumed
+# noise -- not derived from position at all, which is the whole point.
+#
+# Result, worth stating plainly since it's not the naive assumption:
+# lidar's own DERIVED velocity (var ~0.18 (m/s)^2) comes out MORE trusted
+# than radar's DIRECT Doppler measurement (var 1.0) at this sample rate,
+# precisely because lidar's position is so accurate that differencing it
+# still beats an imperfect direct measurement -- radar's velocity
+# advantage over camera_mono's derived velocity (var ~13.6) is real and
+# large, just not automatically "better than everything" by virtue of
+# being direct.
+SENSOR_VELOCITY_TRUST_WEIGHT = {"lidar": 5.5, "radar": 1.0, "camera_mono": 0.074}
+
 print(f"config.py loaded. PROJECT_ROOT = {PROJECT_ROOT}")
 print(f"DATA_ROOT   = {DATA_ROOT}")
 print(f"OUTPUT_ROOT = {OUTPUT_ROOT}")

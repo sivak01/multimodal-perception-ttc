@@ -47,6 +47,25 @@ def point_to_global(point_xyz, ego_pose, calibrated_sensor):
     return point_h[:3].flatten()
 
 
+def vector_to_global(vec_xyz, ego_pose, calibrated_sensor):
+    """Rotates a DIRECTION/velocity vector (not a position) from a sensor's
+    own frame into the global frame -- same rotation chain as
+    point_to_global(), but with the homogeneous w-component set to 0
+    instead of 1, so translation never contributes (a velocity vector has
+    no position, only a direction and magnitude; translating it would
+    silently corrupt it). Used for radar's ego-motion-compensated Doppler
+    velocity (vx_comp, vy_comp), which is reported in the radar's own local
+    x/y axes, not the global frame."""
+    vec = np.array(vec_xyz, dtype=float).reshape(3, 1)
+    vec_h = np.vstack([vec, [[0.0]]])   # w=0: direction only, no translation
+
+    T1 = transform_matrix(calibrated_sensor["translation"], calibrated_sensor["rotation"])
+    T2 = transform_matrix(ego_pose["translation"], ego_pose["rotation"])
+
+    vec_h = T2 @ (T1 @ vec_h)
+    return vec_h[:3].flatten()
+
+
 def points_to_global(points_xyz, src_ego_pose, src_calibrated_sensor):
     """Batch: sensor frame (N,3) -> global frame (N,3)."""
     N = points_xyz.shape[0]
