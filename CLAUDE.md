@@ -352,6 +352,24 @@ Composition breakdown shifted too — multi-sensor merged MAE 2.36 (n=1120, was 
 
 **This is the largest single accuracy win found across the whole investigation** — bigger than the second audit round's radar-velocity fix (radar MAE 5.53→3.80, −31%) and bigger than the identity-inheritance/de-merge fixes combined (fused 4.08→3.94, −3.4%). The honest reading: the "hard ceiling" on fusion accuracy documented earlier in this file was **partly self-imposed by the pipeline's own filtering choices, not solely sensor physics** — worth generalizing as a lesson: whenever a detection-count-reducing filter is justified purely by "less clutter, better quality" (as this one legitimately was, for the noise it *did* remove), it's still worth separately checking whether it's also discarding a cheap, easy, accurate population of real objects along with the noise it was built to catch.
 
+## Full pipeline re-run (Steps 0–7): one stale audit check fixed, LiDAR reproducibility now an open question
+
+A complete manual re-run of every notebook, Step 0 through Step 7, surfaced one real bug and one unverified-but-plausible non-determinism concern.
+
+**Fixed: `Step_7_Pipeline_Audit.ipynb` had a stale check.** `valid_sensor_tokens = {"lidar", "radar", "camera"}` predates the camera_mono swap (see "Second audit round" above) and was flagging the correct, intentional current state — `sensors` containing `camera_mono`, not `camera` — as a failure. Updated to `{"lidar", "radar", "camera_mono"}`. Full audit is now clean: **36 PASS, 0 FAIL, 1 WARN** (the warning is a benign skew check, not a bug).
+
+**Open question, not yet resolved: LiDAR's numbers were not reproducible across this run.** Every other sensor (radar, camera, camera_mono) matched the previously-committed baseline exactly. LiDAR did not: MAE 3.79→3.57, tracks 2354→2385 (fused moved with it: 3.52→3.54). The pipeline's "noise floor: exactly zero" finding (documented above) was only ever verified for Steps 3→6 holding Steps 1–2's output fixed — it has never tested whether `Step_2_1_LiDAR_Processing.ipynb` itself is reproducible. That notebook calls Open3D's `segment_plane()` for ground removal, which fits the plane via RANSAC (a randomized algorithm), and the notebook does not fix a random seed. This is a plausible, untested explanation for the shift — not yet confirmed by actually re-running Step 2.1 twice and diffing its output. **Committing this run's numbers now, before that verification, on the explicit understanding that the LiDAR/fused figures below may not reproduce on the next run** — treat them as a snapshot of this specific execution, not a new stable baseline, until the RANSAC-seed question is checked.
+
+**This run's numbers** (`output/step_6/evaluation_metrics.csv`):
+
+| Sensor | MAE | RMSE | N_Tracks_Total | n_matched_pairs |
+|---|---|---|---|---|
+| lidar | 3.57 (was 3.79 — unverified) | 7.37 | 2385 (was 2354) | 1858 |
+| radar | 2.77 | 6.55 | 7283 | 3065 |
+| camera | 2.87 | 5.99 | 1131 | 1793 |
+| camera_mono | 3.83 | 7.16 | 953 | 1656 |
+| fused | 3.54 (was 3.52 — unverified) | 7.88 | 6178 (was 6139) | 3601 |
+
 ## Dependencies
 
 `requirements.txt` pins the working set of libraries: `nuscenes-devkit` (`nuscenes`, `pyquaternion`), `open3d`, `ultralytics` (YOLO), `torch`/`torchvision`, `opencv-python` (`cv2`), `scikit-learn`, `scipy`, `numpy`, `pandas`, `matplotlib`, `tqdm`, `Pillow`. Install with `pip install -r requirements.txt`.
