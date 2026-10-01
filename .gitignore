@@ -29,3 +29,6 @@ nb_summary.txt
 
 # Claude Code local runtime state (not project content)
 .claude/
+
+# Office transient lock files
+~$*.doc*
