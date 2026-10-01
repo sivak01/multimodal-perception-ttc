@@ -358,9 +358,9 @@ A complete manual re-run of every notebook, Step 0 through Step 7, surfaced one 
 
 **Fixed: `Step_7_Pipeline_Audit.ipynb` had a stale check.** `valid_sensor_tokens = {"lidar", "radar", "camera"}` predates the camera_mono swap (see "Second audit round" above) and was flagging the correct, intentional current state — `sensors` containing `camera_mono`, not `camera` — as a failure. Updated to `{"lidar", "radar", "camera_mono"}`. Full audit is now clean: **36 PASS, 0 FAIL, 1 WARN** (the warning is a benign skew check, not a bug).
 
-**Open question, not yet resolved: LiDAR's numbers were not reproducible across this run.** Every other sensor (radar, camera, camera_mono) matched the previously-committed baseline exactly. LiDAR did not: MAE 3.79→3.57, tracks 2354→2385 (fused moved with it: 3.52→3.54). The pipeline's "noise floor: exactly zero" finding (documented above) was only ever verified for Steps 3→6 holding Steps 1–2's output fixed — it has never tested whether `Step_2_1_LiDAR_Processing.ipynb` itself is reproducible. That notebook calls Open3D's `segment_plane()` for ground removal, which fits the plane via RANSAC (a randomized algorithm), and the notebook does not fix a random seed. This is a plausible, untested explanation for the shift — not yet confirmed by actually re-running Step 2.1 twice and diffing its output. **Committing this run's numbers now, before that verification, on the explicit understanding that the LiDAR/fused figures below may not reproduce on the next run** — treat them as a snapshot of this specific execution, not a new stable baseline, until the RANSAC-seed question is checked.
+**Open question at the time, since resolved below: LiDAR's numbers were not reproducible across this run.** Every other sensor (radar, camera, camera_mono) matched the previously-committed baseline exactly. LiDAR did not: MAE 3.79→3.57, tracks 2354→2385 (fused moved with it: 3.52→3.54). The pipeline's "noise floor: exactly zero" finding (documented above) was only ever verified for Steps 3→6 holding Steps 1–2's output fixed — it had never tested whether `Step_2_1_LiDAR_Processing.ipynb` itself is reproducible. That notebook calls Open3D's `segment_plane()` for ground removal, which fits the plane via RANSAC (a randomized algorithm), and the notebook did not fix a random seed. This run's numbers were committed anyway, on the explicit understanding they might not reproduce on the next run — see the next section for the confirmation and fix.
 
-**This run's numbers** (`output/step_6/evaluation_metrics.csv`):
+**This run's numbers** (`output/step_6/evaluation_metrics.csv`, superseded by the next section):
 
 | Sensor | MAE | RMSE | N_Tracks_Total | n_matched_pairs |
 |---|---|---|---|---|
@@ -369,6 +369,35 @@ A complete manual re-run of every notebook, Step 0 through Step 7, surfaced one 
 | camera | 2.87 | 5.99 | 1131 | 1793 |
 | camera_mono | 3.83 | 7.16 | 953 | 1656 |
 | fused | 3.54 (was 3.52 — unverified) | 7.88 | 6178 (was 6139) | 3601 |
+
+## RANSAC non-determinism confirmed and fixed — LiDAR's true reproducible baseline is MAE 3.77, not 3.57 or 3.79
+
+The open question above was resolved by direct testing rather than left as a plausible guess.
+
+**Confirmed the hypothesis first, before writing any fix.** Re-ran `Step_2_1_LiDAR_Processing.ipynb` on unchanged code/input and diffed `output/step_2/lidar_summary.csv` against a pre-run snapshot: `sample_0000`'s ground-point count alone moved 14863→10671 (a 28% swing), with every one of the first 5 samples differing meaningfully. This is decisively larger than any plausible floating-point/ordering noise — `segment_plane()`'s RANSAC genuinely resamples differently every call, and `o3d.geometry.PointCloud.segment_plane()`'s own signature confirms it takes no seed argument.
+
+**Fix: Open3D's global seed hook.** Open3D 0.19.0 (the version pinned by `requirements.txt`) exposes `o3d.utility.random.seed(seed: int)`, a global RNG seed not mentioned on `segment_plane()`'s own docstring but confirmed by `dir(o3d.utility)` to exist and to control exactly this randomness. Verified in isolation before touching the notebook: (1) seeding before each of 3 repeated `segment_plane()` calls in one process gives identical inlier counts every time, while different seeds give different results — confirming the seed genuinely drives the behavior, not coincidence; (2) running the same seeded script as two **separate process launches** gives identical output — confirming the fix survives process boundaries, the actual requirement for two independent `nbconvert` executions to agree; (3) seeding **once** and then processing 5 different samples in sequence (matching the real pipeline's one-seed-call-then-loop structure) gives identical per-sample results across two separate process runs — confirming one seed call at the top is sufficient for the whole 404-sample loop, not just a single isolated call.
+
+Applied: `Step_2_1_LiDAR_Processing.ipynb` Cell 4 now calls `o3d.utility.random.seed(LIDAR_RANSAC_SEED)` (`LIDAR_RANSAC_SEED = 42`) once, immediately after the imports and before the main per-sample loop begins.
+
+**Verified end-to-end, twice over, at both the stage level and the full-pipeline level — not assumed from the isolated test alone:**
+- Step 2.1 alone, run twice independently: `lidar_summary.csv` byte-identical both times.
+- Steps 2.1→3.1→4→5→6, run twice independently (fresh random track-file UUIDs each time, same as every other determinism check in this file): `evaluation_metrics.csv` byte-identical both times.
+- Step 7's full audit re-run clean afterward: 36 PASS, 0 FAIL, 7 OK, 1 WARN.
+
+**Result: LiDAR's true, now-reproducible MAE is 3.77** (RMSE 7.85, 2327 tracks, 1907 matched pairs) — close to the originally-committed 3.79 (a 0.5% difference, well within the kind of small shift a fixed-but-different seed value would produce) and nowhere near the user's manual run's unseeded 3.57. This confirms the 3.57/2385 figures committed in the previous section were indeed a non-deterministic artifact of the unseeded RANSAC call, not a new stable number — they are superseded by this section, not averaged with it.
+
+**Updated current state** (`output/step_6/evaluation_metrics.csv`, now fully reproducible):
+
+| Sensor | MAE | RMSE | N_Tracks_Total | n_matched_pairs |
+|---|---|---|---|---|
+| lidar | **3.77** | 7.85 | 2327 | 1907 |
+| radar | 2.77 | 6.55 | 7283 | 3065 |
+| camera | 2.87 | 5.99 | 1131 | 1793 |
+| camera_mono | 3.83 | 7.16 | 953 | 1656 |
+| fused | **3.55** | 7.98 | 6175 | 3602 |
+
+Fused (3.55) still beats LiDAR (3.77, a 5.8% margin) and trails camera (2.87) — consistent with the "Radar declutter filter relaxed" section's conclusion that fused overtakes LiDAR once radar's stationary-object coverage is restored. The small movement from that section's committed 3.52/3.79 to this section's 3.55/3.77 is attributable to the LiDAR RANSAC seed changing which exact points fall on which side of the ground-plane cut (a few points per sample reclassified, cascading into slightly different clusters and tracks) — expected from fixing a previously-undefined random draw to a specific value, not a sign of a remaining bug. **The general lesson, worth remembering for any future randomized-algorithm call in this codebase: a library call that "just happens to be deterministic enough in practice" should never be assumed reproducible without fixing its seed explicitly and testing across process boundaries — same discipline as the earlier `FusedTracker` glob-ordering bug, different library, same root cause (unexamined call into a randomized routine).**
 
 ## Dependencies
 
