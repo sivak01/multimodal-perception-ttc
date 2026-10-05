@@ -414,6 +414,14 @@ A terminal visualization stage, added on request to make the fusion result visua
 
 Outputs: `output/step_8/videos/<scene_name>.mp4` (10 files) and `output/step_8/bev_video_summary.csv` (per-scene frame count/fps). This stage reads only already-committed outputs (Steps 0–5) and writes nothing any other stage consumes — it's correctly excluded from Step 7's audit scope (which only walks Steps 0–6).
 
+### Part 2: a second "mission control" dashboard video, matching a provided reference layout
+
+Added on request, as an additional output alongside Part 1's simpler 2-panel video — a 2x3 grid of all 6 camera views (not just `CAM_FRONT`), each with the nearest `NEAREST_N_PER_CAMERA=6` fused tracks labeled (TTC + distance), next to a radar-style polar BEV panel: range rings, the 6 radar-channel-style compass sector labels (`FRONT`/`FRONT_RIGHT`/`BACK_RIGHT`/`BACK`/`BACK_LEFT`/`FRONT_LEFT`), a to-scale ego rectangle, yellow velocity arrows (track `(vx, vy)` rotated into the ego frame, same rotation-only transform `vector_to_global()` already uses elsewhere, just inverted), color-coded TTC dots (its own legend, `TTC2_RED_S=2.0`/`TTC2_ORANGE_S=4.0`/`TTC2_YELLOW_S=10.0` — distinct from Part 1's bins, chosen to match the reference exactly rather than reuse Part 1's), the real nuScenes ground-truth boxes (green dashed) for direct visual comparison, and a header reporting scene/sample/ego speed/a "critical tracks" count (fused tracks with TTC < 4s).
+
+**GT boxes needed a class filter, found by inspecting one scene directly rather than assumed.** nuScenes `sample_annotation` includes every annotated object, not just the vehicle/pedestrian classes this pipeline tracks — checking one real sample (a construction-zone scene) found 52 `movable_object.barrier` + 37 `movable_object.trafficcone` annotations against only ~59 real vehicles/pedestrians, which swamped the BEV panel with box clutter for objects nothing in this pipeline ever detects or computes TTC for. Filtered to `category_name` starting with `vehicle.` or `human.pedestrian.` — matching the same class scope as Step 2.3's YOLO filter (person/bicycle/car/motorcycle/bus/truck) — which cut the clutter roughly in half and left only genuinely TTC-relevant ground truth.
+
+Outputs: `output/step_8/videos_detailed/<scene_name>.mp4` (10 files) and `output/step_8/detailed_video_summary.csv`. Reuses Part 1's loaders and `global_points_to_camera()`/`transform_matrix()` projection math throughout — no parallel geometry implementation.
+
 ## Dependencies
 
 `requirements.txt` pins the working set of libraries: `nuscenes-devkit` (`nuscenes`, `pyquaternion`), `open3d`, `ultralytics` (YOLO), `torch`/`torchvision`, `opencv-python` (`cv2`), `scikit-learn`, `scipy`, `numpy`, `pandas`, `matplotlib`, `tqdm`, `Pillow`. Install with `pip install -r requirements.txt`.
