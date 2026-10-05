@@ -8,7 +8,7 @@ A camera + radar + LiDAR fusion pipeline built on the [nuScenes v1.0-mini](https
 
 ## Pipeline stages
 
-The pipeline is a sequence of 17 Jupyter notebooks, run in order, each reading the previous stage's output from disk and writing its own:
+The pipeline is a sequence of 18 Jupyter notebooks, run in order, each reading the previous stage's output from disk and writing its own:
 
 | Stage | Notebook | What it does |
 |---|---|---|
@@ -27,6 +27,7 @@ The pipeline is a sequence of 17 Jupyter notebooks, run in order, each reading t
 | 5 | `Step_5_TTC.ipynb` | UKF + CTRV motion model → TTC estimate per track, per sensor and fused |
 | 6 | `Step_6_Visualization.ipynb` | Trend plots + evaluation metrics against nuScenes ground truth |
 | 7 | `Step_7_Pipeline_Audit.ipynb` | Read-only audit: checks input/output counts and known-bug regressions at every stage |
+| 8 | `Step_8_BEV_Fusion_Video.ipynb` | Terminal visualization: renders a Bird's-Eye View + camera video with fused TTC overlaid on both, per scene |
 | — | `Validate_Step_2_3_1.ipynb` | Standalone validator for Step 2.3.1's 3D projections |
 
 Each notebook's first cell documents its own Input / Outputs / Used-by contract — read it before changing a stage's output format, since downstream notebooks depend on it exactly.
@@ -38,6 +39,22 @@ Each notebook's first cell documents its own Input / Outputs / Used-by contract 
 </p>
 
 `Step_6_Visualization.ipynb` computes these metrics — mean/median TTC, estimate stability (std. dev.), the fraction of tracks with a valid TTC prediction, and MAE/RMSE against nuScenes ground-truth annotations — per sensor and for the fused estimate. The full numbers for a given run are written to `output/step_6/evaluation_metrics.csv`.
+
+### Fusion + TTC, visualized
+
+`Step_8_BEV_Fusion_Video.ipynb` renders every sample as a Bird's-Eye View (all sensors + fused tracks, each labeled with its fused TTC) next to the real camera frame with fused TTC projected directly onto it, then encodes one video per scene:
+
+<p align="center">
+  <img src="assets/bev_camera_ttc.png" width="100%" alt="Bird's-Eye View of all sensor detections and fused tracks on the left, the real CAM_FRONT image with fused TTC bounding boxes on the right">
+</p>
+
+A second, more detailed per-scene video adds all 6 camera views (each with its own nearest-object TTC labels) next to a radar-style polar BEV — range rings, velocity arrows, ground-truth boxes, and a status header:
+
+<p align="center">
+  <img src="assets/bev_dashboard_ttc.png" width="100%" alt="6-camera grid with TTC/distance labels next to a radar-style polar BEV panel showing range rings, velocity arrows, color-coded TTC dots, and ground-truth boxes">
+</p>
+
+Example videos for one day scene and one night scene are committed under `output/step_8/videos/` and `output/step_8/videos_detailed/`; the rest regenerate by running the notebook.
 
 ### Pipeline stages, visually
 
