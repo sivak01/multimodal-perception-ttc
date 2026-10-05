@@ -37,6 +37,7 @@ Pipeline order:
 | 5 | `Step_5_TTC.ipynb` | UKF + CTRV motion model → TTC estimate per track for LiDAR/radar/camera/camera-mono; the fused dataset already carries state-fused velocity from Step 4, so it skips straight to TTC instead of re-filtering |
 | 6 | `Step_6_Visualization.ipynb` | Trend plots + evaluation metrics against nuScenes `sample_annotation` ground truth |
 | 7 | `Step_7_Pipeline_Audit.ipynb` | Read-only audit: walks Steps 0–6 checking input/output counts and known-bug regressions at every stage; does not modify any output |
+| 8 | `Step_8_BEV_Fusion_Video.ipynb` | Terminal visualization stage: renders a per-sample Bird's-Eye-View (all sensors + fused TTC) next to the real `CAM_FRONT` frame, and encodes one MP4 per scene; see below |
 | — | `Validate_Step_2_3_1.ipynb` | Standalone validator for Step 2.3.1's 3D projections |
 
 Each notebook's first markdown cell documents its own **Input / Outputs / Used by** table — read that cell before modifying a stage, since output schemas are contracts downstream notebooks depend on exactly (e.g. LiDAR/radar tracks are tuple-format, camera tracks are dict-format — Step 4 handles both explicitly).
@@ -398,6 +399,18 @@ Applied: `Step_2_1_LiDAR_Processing.ipynb` Cell 4 now calls `o3d.utility.random.
 | fused | **3.55** | 7.98 | 6175 | 3602 |
 
 Fused (3.55) still beats LiDAR (3.77, a 5.8% margin) and trails camera (2.87) — consistent with the "Radar declutter filter relaxed" section's conclusion that fused overtakes LiDAR once radar's stationary-object coverage is restored. The small movement from that section's committed 3.52/3.79 to this section's 3.55/3.77 is attributable to the LiDAR RANSAC seed changing which exact points fall on which side of the ground-plane cut (a few points per sample reclassified, cascading into slightly different clusters and tracks) — expected from fixing a previously-undefined random draw to a specific value, not a sign of a remaining bug. **The general lesson, worth remembering for any future randomized-algorithm call in this codebase: a library call that "just happens to be deterministic enough in practice" should never be assumed reproducible without fixing its seed explicitly and testing across process boundaries — same discipline as the earlier `FusedTracker` glob-ordering bug, different library, same root cause (unexamined call into a randomized routine).**
+
+## Step 8: Bird's-Eye-View fusion video
+
+A terminal visualization stage, added on request to make the fusion result visually inspectable rather than only readable as a CSV of metrics. For each of the 404 samples, renders a combined frame: a left panel showing an ego-centered, heading-up **Bird's-Eye View** with every sensor's detections for that frame (LiDAR cluster centroids, post-declutter radar points, true-monocular `camera_mono` detections across all 6 cameras) plus the **fused** tracks active that frame, each labeled with its fused TTC and color-coded by urgency (red < 3s, orange < 6s, yellow < 10s, green otherwise, gray = no finite TTC yet); and a right panel showing the real `CAM_FRONT` image for that sample, for a direct visual sanity check against the BEV reconstruction.
+
+**Scope decision: one MP4 per scene (10 videos), not one combined file.** nuScenes v1.0-mini's 404 samples are actually 10 separate continuous driving clips (scenes) concatenated in the index — the same fact that motivated the scene-boundary-isolation fix in Steps 3.1/3.2/3.3. A single combined video would have 9 visible jump-cuts at the scene boundaries; one video per scene instead matches how the data was actually recorded, consistent with "the video as it was in the input."
+
+**fps is measured per scene, not assumed.** Each video's frame rate is derived from that scene's own real `timestamp_us` deltas (median inter-sample interval), not a hardcoded constant — this reproduces the original recording's actual temporal cadence rather than guessing. All 10 scenes measured out to the dataset's standard 2.0 Hz keyframe rate, confirming there's no per-scene timing irregularity worth accounting for separately.
+
+**BEV orientation reuses existing math, not new conventions.** The ego-local, heading-up transform is just `src/geometry.py`'s `transform_matrix(ego_pose["translation"], ego_pose["rotation"], inverse=True)` — the same global-to-ego inversion already used elsewhere in the pipeline, applied here for visualization instead of tracking. No new coordinate convention was introduced.
+
+Outputs: `output/step_8/videos/<scene_name>.mp4` (10 files) and `output/step_8/bev_video_summary.csv` (per-scene frame count/fps). This stage reads only already-committed outputs (Steps 0–5) and writes nothing any other stage consumes — it's correctly excluded from Step 7's audit scope (which only walks Steps 0–6).
 
 ## Dependencies
 

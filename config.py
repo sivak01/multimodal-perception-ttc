@@ -26,10 +26,11 @@ STEP3_DIR  = OUTPUT_ROOT / "step_3"
 STEP4_DIR  = OUTPUT_ROOT / "step_4"
 STEP5_DIR  = OUTPUT_ROOT / "step_5"
 STEP6_DIR  = OUTPUT_ROOT / "step_6"
+STEP8_DIR  = OUTPUT_ROOT / "step_8"
 
 # Create all output dirs on import
 for d in [STEP0_DIR, STEP1_DIR, STEP2_DIR,
-          STEP3_DIR, STEP4_DIR, STEP5_DIR, STEP6_DIR, ARCHIVE_ROOT]:
+          STEP3_DIR, STEP4_DIR, STEP5_DIR, STEP6_DIR, STEP8_DIR, ARCHIVE_ROOT]:
     d.mkdir(parents=True, exist_ok=True)
 
 # ── Shared sensor trust weights ─────────────────────────────
