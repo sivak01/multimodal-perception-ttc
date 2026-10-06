@@ -96,7 +96,7 @@ This repo does **not** include the nuScenes dataset. Download the `v1.0-mini` sp
 DATA_ROOT = Path(r"path/to/your/nuscenes/archive")
 ```
 
-nuScenes data is distributed by Motional under its own [terms of use](https://www.nuscenes.org/terms-of-use), which are separate from this repository's license — see [LICENSE](LICENSE).
+nuScenes data is distributed by Motional under its own [terms of use](https://www.nuscenes.org/terms-of-use), which are separate from this repository's license — see [License](#license) below.
 
 ### Running the pipeline
 
@@ -108,4 +108,8 @@ jupyter nbconvert --to notebook --execute --inplace "Step_0_Dataset_Preparation.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Does not cover the nuScenes dataset itself.
+This repo's **code** (notebooks, `src/`, `v2/`, `config.py`) is MIT — see [LICENSE](LICENSE).
+
+The **nuScenes dataset itself, and anything derived from it** — the images in `assets/`, the example videos under `output/step_8/`, and the figures inside `docs/` — are a different matter. nuScenes is distributed by Motional under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode) plus [additional dataset terms](https://www.nuscenes.org/terms-of-use), which explicitly extend to *any data derived from the Datasets, in any format*. That means those specific files are **not** MIT — they carry the dataset's own license: non-commercial use, attribution to Motional, and any further derivative must be shared under the same CC BY-NC-SA 4.0 terms.
+
+> nuScenes™ is a public, free-to-use dataset for non-commercial use, made available by Motional AD Inc. under CC BY-NC-SA 4.0. This project is an independent research pipeline built on nuScenes v1.0-mini and is not affiliated with, sponsored by, or endorsed by Motional.
