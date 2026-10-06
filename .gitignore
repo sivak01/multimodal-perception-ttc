@@ -51,3 +51,7 @@ output/step_8/videos/*
 output/step_8/videos_detailed/*
 !output/step_8/videos_detailed/scene-0061.mp4
 !output/step_8/videos_detailed/scene-1077.mp4
+
+# Hugging Face Space deployment (its own git remote, not this repo --
+# pushed directly to huggingface.co, holds all 10 scenes' videos)
+huggingface_space/
