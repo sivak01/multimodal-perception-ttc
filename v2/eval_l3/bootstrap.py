@@ -119,6 +119,16 @@ def ci_excludes_zero(ci_low, ci_high):
     return (ci_low > 0 and ci_high > 0) or (ci_low < 0 and ci_high < 0)
 
 
+def _log_binom_pmf_half(n, k):
+    """log(C(n, k) * 0.5**n), via lgamma -- stays in float range for
+    any n (unlike forming the exact integer math.comb(n, k) first,
+    which for n in the thousands can have hundreds of digits and
+    overflow float conversion before the 0.5**n factor ever shrinks
+    it back down -- found via a real H6 "overall" slice with several
+    thousand paired keys, not a hypothetical)."""
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1) + n * math.log(0.5)
+
+
 def paired_sign_test(paired_diffs):
     """paired_diffs: list of (a - b) for each paired unit (e.g. one
     (instance, range_bucket) group's mean single-error minus mean
@@ -127,10 +137,13 @@ def paired_sign_test(paired_diffs):
     are equally likely (ties, exact 0.0, are dropped from n per the
     standard sign-test convention -- they carry no directional
     information). Returns dict with n, n_positive, n_negative, n_ties,
-    p_value. No scipy dependency (binomial CDF computed directly via
-    math.comb, exact, not a normal approximation) -- small, well-
-    defined numbers of groups are expected here, not large-n regimes
-    where that would matter anyway."""
+    p_value.
+
+    No scipy dependency -- computed directly via the exact binomial
+    PMF, but in LOG space (see _log_binom_pmf_half) with a log-sum-exp
+    reduction, not by forming math.comb(n, k) as a giant exact integer
+    first (that only works for small n; overflows float conversion for
+    n in the thousands, which real H6 slices reach)."""
     positive = sum(1 for d in paired_diffs if d > 0)
     negative = sum(1 for d in paired_diffs if d < 0)
     ties = len(paired_diffs) - positive - negative
@@ -140,7 +153,9 @@ def paired_sign_test(paired_diffs):
         return {"n": 0, "n_positive": positive, "n_negative": negative, "n_ties": ties, "p_value": None}
 
     k = min(positive, negative)   # two-sided: double the smaller tail
-    tail = sum(math.comb(n, i) for i in range(0, k + 1)) * (0.5 ** n)
+    log_terms = [_log_binom_pmf_half(n, i) for i in range(0, k + 1)]
+    max_log = max(log_terms)
+    tail = math.exp(max_log) * sum(math.exp(t - max_log) for t in log_terms)
     p_value = min(1.0, 2 * tail)
     return {"n": n, "n_positive": positive, "n_negative": negative, "n_ties": ties, "p_value": round(p_value, 6)}
 

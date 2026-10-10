@@ -87,6 +87,26 @@ def test_paired_sign_test_empty():
     assert result["p_value"] is None
 
 
+def test_paired_sign_test_large_n_does_not_overflow():
+    """Regression test: a real H6 'overall' slice had several thousand
+    paired keys, which overflowed the original math.comb-based
+    implementation (int too large to convert to float). 5000 clearly
+    lopsided diffs should give a tiny, well-defined p-value, not a
+    crash."""
+    diffs = [1.0] * 4000 + [-1.0] * 1000
+    result = paired_sign_test(diffs)
+    assert result["n"] == 5000
+    assert result["p_value"] is not None
+    assert result["p_value"] < 1e-100   # overwhelmingly lopsided -> astronomically small p
+
+
+def test_paired_sign_test_large_n_balanced_gives_p_near_one():
+    diffs = [1.0] * 2500 + [-1.0] * 2500
+    result = paired_sign_test(diffs)
+    assert result["n"] == 5000
+    assert result["p_value"] == 1.0
+
+
 # ---------------------------------------------------------------------
 # scene_bootstrap_p_value
 # ---------------------------------------------------------------------
