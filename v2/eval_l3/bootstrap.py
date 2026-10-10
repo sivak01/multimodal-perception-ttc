@@ -22,6 +22,28 @@ def group_rows_by_scene(rows, scene_of_row):
     return by_scene
 
 
+def _bootstrap_resamples(rows_by_scene, stat_fn, n_resamples, seed):
+    """Shared resampling core for scene_bootstrap_ci() and
+    scene_bootstrap_p_value() -- same scene_ids, same seed, same
+    n_resamples, so the CI and the p-value for one comparison are
+    always drawn from the IDENTICAL bootstrap distribution rather than
+    two independently-reseeded runs. Returns the raw list of finite
+    stat_fn() values across resamples (non-finite/None dropped, same
+    convention as scene_bootstrap_ci)."""
+    scene_ids = list(rows_by_scene.keys())
+    rng = random.Random(seed)
+    samples = []
+    for _ in range(n_resamples):
+        resampled_scenes = [rng.choice(scene_ids) for _ in scene_ids]
+        pooled = []
+        for sid in resampled_scenes:
+            pooled.extend(rows_by_scene[sid])
+        val = stat_fn(pooled)
+        if val is not None and math.isfinite(val):
+            samples.append(val)
+    return samples
+
+
 def scene_bootstrap_ci(rows_by_scene, stat_fn,
                         n_resamples=cfg.BOOTSTRAP_N_RESAMPLES, seed=cfg.BOOTSTRAP_SEED,
                         ci_pct=cfg.BOOTSTRAP_CI_PCT):
@@ -51,25 +73,41 @@ def scene_bootstrap_ci(rows_by_scene, stat_fn,
     if len(scene_ids) < 2 or point_estimate is None:
         return point_estimate, None, None, 0
 
-    rng = random.Random(seed)
-    samples = []
-    for _ in range(n_resamples):
-        resampled_scenes = [rng.choice(scene_ids) for _ in scene_ids]
-        pooled = []
-        for sid in resampled_scenes:
-            pooled.extend(rows_by_scene[sid])
-        val = stat_fn(pooled)
-        if val is not None and math.isfinite(val):
-            samples.append(val)
+    samples = _bootstrap_resamples(rows_by_scene, stat_fn, n_resamples, seed)
 
     if len(samples) < 2:
         return point_estimate, None, None, len(samples)
 
-    samples.sort()
+    samples = sorted(samples)
     alpha = (100 - ci_pct) / 2 / 100
     lo_idx = max(0, int(math.floor(alpha * len(samples))))
     hi_idx = min(len(samples) - 1, int(math.ceil((1 - alpha) * len(samples))) - 1)
     return point_estimate, samples[lo_idx], samples[hi_idx], len(samples)
+
+
+def scene_bootstrap_p_value(rows_by_scene, stat_fn,
+                             n_resamples=cfg.BOOTSTRAP_N_RESAMPLES, seed=cfg.BOOTSTRAP_SEED):
+    """Two-sided bootstrap p-value for testing stat_fn's pooled value
+    against 0 (e.g. stat_fn = merged_MAE - single_MAE), drawn from the
+    SAME resample distribution scene_bootstrap_ci() would use (same
+    seed) -- so this p-value and that CI are two views of one
+    bootstrap run, never independently reseeded, and "CI excludes 0"
+    and "p < alpha" agree by construction (both ask what fraction of
+    the bootstrap distribution crosses 0).
+
+    p = 2 * min(fraction of resamples <= 0, fraction of resamples >= 0),
+    capped at 1.0 -- the standard percentile-bootstrap two-sided
+    p-value. Returns None if there are fewer than 2 scenes or fewer
+    than 2 usable resamples (same guard as scene_bootstrap_ci)."""
+    if len(rows_by_scene) < 2:
+        return None
+    samples = _bootstrap_resamples(rows_by_scene, stat_fn, n_resamples, seed)
+    if len(samples) < 2:
+        return None
+    n = len(samples)
+    frac_le = sum(1 for s in samples if s <= 0) / n
+    frac_ge = sum(1 for s in samples if s >= 0) / n
+    return min(1.0, 2 * min(frac_le, frac_ge))
 
 
 def ci_excludes_zero(ci_low, ci_high):
@@ -105,6 +143,68 @@ def paired_sign_test(paired_diffs):
     tail = sum(math.comb(n, i) for i in range(0, k + 1)) * (0.5 ** n)
     p_value = min(1.0, 2 * tail)
     return {"n": n, "n_positive": positive, "n_negative": negative, "n_ties": ties, "p_value": round(p_value, 6)}
+
+
+def bonferroni_correct(p_values, alpha=0.05):
+    """Simplest, most conservative family-wise correction: the per-test
+    significance threshold is alpha / len(p_values); a p-value
+    "survives" if it is below that threshold (not if p*len(p_values) is
+    compared to alpha -- same conclusion, computed the more standard
+    way around). Returns a list of (p_value, survives_bool) in the
+    SAME order as the input."""
+    n = len(p_values)
+    if n == 0:
+        return []
+    threshold = alpha / n
+    return [(p, (p is not None and p < threshold)) for p in p_values]
+
+
+def holm_bonferroni_correct(p_values, alpha=0.05):
+    """Less conservative, still family-wise-error-rate-controlling,
+    step-down correction: sort ascending, compare the i-th smallest
+    p-value (1-indexed) against alpha/(n-i+1), stop at the first
+    failure (every later, larger p-value is then also treated as not
+    surviving, per the Holm procedure). Returns survives_bool per
+    ORIGINAL input index (order-preserving), not the sorted order."""
+    n = len(p_values)
+    if n == 0:
+        return []
+    indexed = sorted(
+        [(i, p) for i, p in enumerate(p_values) if p is not None],
+        key=lambda ip: ip[1],
+    )
+    survives = [False] * n
+    for rank, (orig_i, p) in enumerate(indexed):   # rank is 0-indexed
+        threshold = alpha / (n - rank)
+        if p < threshold:
+            survives[orig_i] = True
+        else:
+            break   # Holm's procedure: stop at the first non-rejection
+    return survives
+
+
+def benjamini_hochberg_correct(p_values, alpha=0.05):
+    """False-discovery-rate control (less conservative than either
+    Bonferroni variant above): sort ascending, find the LARGEST i such
+    that the i-th smallest p-value <= (i/n)*alpha, and everything at or
+    below that rank survives. Returns survives_bool per ORIGINAL input
+    index."""
+    n = len(p_values)
+    if n == 0:
+        return []
+    indexed = sorted(
+        [(i, p) for i, p in enumerate(p_values) if p is not None],
+        key=lambda ip: ip[1],
+    )
+    survives = [False] * n
+    largest_surviving_rank = -1
+    for rank, (orig_i, p) in enumerate(indexed):   # rank is 0-indexed
+        if p <= ((rank + 1) / n) * alpha:
+            largest_surviving_rank = rank
+    for rank, (orig_i, p) in enumerate(indexed):
+        if rank <= largest_surviving_rank:
+            survives[orig_i] = True
+    return survives
 
 
 # Exposed for modules that want a quick z-based sanity check without a
