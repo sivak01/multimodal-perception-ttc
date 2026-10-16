@@ -55,3 +55,8 @@ output/step_8/videos_detailed/*
 # Hugging Face Space deployment (its own git remote, not this repo --
 # pushed directly to huggingface.co, holds all 10 scenes' videos)
 huggingface_space/
+
+# Graphify knowledge graph (regenerated locally via `graphify update .`;
+# the CLAUDE.md section + Claude Code hook pointing at it are tracked,
+# the generated graph/vault itself is not)
+graphify-out/

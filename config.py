@@ -11,8 +11,8 @@ BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR   # alias — same thing, either name works in notebooks
 
 # ── Dataset ────────────────────────────────────────────────
-DATA_ROOT = Path(r"F:\Sensor fusion Research\DATA SET\archive")   # ← change this once
-NUSCENES_VERSION = "v1.0-mini"
+DATA_ROOT = Path(r"E:\DATA SET\archive")   # ← change this once
+NUSCENES_VERSION = "v1.0-trainval"
 
 # ── Output root (anchored to BASE_DIR, not "./") ────────────
 OUTPUT_ROOT = BASE_DIR / "output"

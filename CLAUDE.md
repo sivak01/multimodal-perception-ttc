@@ -437,6 +437,65 @@ A read-only statistical evaluation layer, `v2/eval_l3/`, built specifically to r
 
 **Bottom line, stated the same way the "consolidated summary" above does for v1 alone:** this stricter re-test does not overturn anything already documented in this file — it sharpens it. Blanket fusion does not reliably beat the best individual sensor in the safety-critical zone; where we have enough data to say so with confidence (v1, radar, parked objects), merging in noisier sensors measurably *hurts* an already-accurate reading, which argues for situation-aware/trust-weighted fusion rather than uniform merging. Equally important: most of the narrower slices (by ODD, class, in-corridor, v2 generally) are **not proven either way** — nuScenes-mini is simply too small (10 scenes, ~202s of driving) to test the safety-critical question with real statistical power. The natural next step, not yet done: re-run `v2/eval_l3` against nuScenes full `v1.0-trainval` (or just 1-2 of its 10 official download parts, ~85-170 scenes, ~30-70GB — the identical schema, zero code changes needed) to see whether the same findings hold with enough corridor/near-term events to reach n>=30 in every slice.
 
+## nuScenes v1.0-trainval migration: fixing eval_l3's statistical-power problem
+
+Migrated the entire v1 pipeline's dataset source from nuScenes-mini (10 scenes, 404 samples) to nuScenes v1.0-trainval Part 1, keyframes-only (85 of 850 metadata scenes have real downloaded sensor files, 3,376 of 34,149 total samples), stored on a separate drive (`E:\DATA SET\archive` — mini's `F:` drive had no room). **Why:** the `v2/eval_l3` H1/H6 analysis above found mini's narrow safety-critical slices (e.g. "in-corridor, GT TTC 0-5s") had only n=12-45 paired keys, below the n≥30 reliability floor. 85 scenes (8.5x more) was chosen to clear that floor within a 100GB free-drive budget; keyframes-only because the whole pipeline (grep-confirmed) never reads `sweeps/`.
+
+**Only two things changed in the codebase**, consistent with the project's "config.py is the single source of truth" architecture:
+- `config.py`: `DATA_ROOT` → `E:\DATA SET\archive`, `NUSCENES_VERSION` → `"v1.0-trainval"`.
+- `Step_0_Dataset_Preparation.ipynb`: added a scene-filter (checks each scene's first sample's `LIDAR_TOP` file actually exists on disk) — needed because trainval metadata always covers all 850 scenes, but only a downloaded part's scenes have real sensor files; mini never needed this because its metadata only ever lists scenes that do have files. Backward-compatible no-op on mini by construction.
+
+Every other notebook from Step 1.1 through Step 6 needed **zero code changes** — ran against the new data unchanged, confirming `config.py`'s path-indirection design worked end to end exactly as intended.
+
+**One real bug found and fixed in `Step_7_Pipeline_Audit.ipynb`**, caught by the project's own pre-flight-scan discipline before running it on trainval: `check("Step0", "Sample count == 404 (nuScenes-mini)", n_samples == 404, ...)` was hardcoded to mini's exact sample count and would have spuriously FAILed — the same stale-dataset-assumption class as the `valid_sensor_tokens` bug already documented above (the camera_mono swap). Fixed to be version-aware (`NUSCENES_VERSION` now imported into the audit): exact `== 404` only when on mini, otherwise just asserts the index is non-empty, since trainval's real sample count depends on which scenes/parts were downloaded, not a universal constant.
+
+**Hard operational constraint discovered**: each `NuScenes(version='v1.0-trainval')` load needs ~7GB RAM (full metadata: 2.6M `sample_data` rows, 1.17M annotations) vs. mini's much smaller footprint; running 3 notebooks in parallel on a 16GB machine caused a `MemoryError`. Every notebook from Step 0 onward was run strictly sequentially for this migration as a result.
+
+### Full pipeline results on trainval vs. mini
+
+All comparisons pulled directly from each stage's own summary CSV against a pre-migration backup of mini's complete `output/` tree (`archive/output_backup_before_step1_20261015.zip`), never from memory or assumption.
+
+| Metric | Mini → Trainval | Note |
+|---|---|---|
+| Step 2.1 LiDAR clusters/sample | 44.0 → 41.9 | stable, confirms 85 scenes aren't skewed |
+| Step 2.2 radar kept-detection rate | 79.1% → 85.9% | cleaner on trainval |
+| Step 2.3 YOLO empty-detection rate | 55.9% → 80.9% | sparser than mini's curated demo scenes |
+| Step 3 tracks (lidar/radar/camera/camera_mono) | 2327/7283/1131/953 → 20497/75631/5783/5038 | volume scales with each sensor's own upstream data character |
+| Step 4 fused multi-sensor merge rate | 10.5% → 7.9% | lower sensor-overlap on the larger, more representative scene set |
+| Step 6 MAE — radar (best sensor, both) | 2.77 → **2.39** | |
+| Step 6 MAE — camera (LiDAR-assisted) | 2.87 → 2.87 | |
+| Step 6 MAE — fused | 3.55 → **2.88** | improved 19% in absolute terms, closed the gap to camera to a statistical tie, but radar remains clearly ahead |
+| Step 6 MAE — lidar | 3.77 → 3.08 | |
+| Step 6 MAE — camera_mono | 3.83 → 3.63 | |
+| Step 7 audit | 36 PASS/0 FAIL/7 OK/1 WARN → 36 PASS/0 FAIL/8 OK/0 WARN | every historical regression check still clean at 8.4x the data |
+
+**Core finding confirmed at far higher statistical confidence, not overturned**: radar remains the single best individual sensor on trainval, same as on mini, now backed by 5-10x more ground-truth-matched pairs per sensor (e.g. radar 1,775→11,806 matched pairs). Fusion still does not beat the best individual sensor overall, though the gap to the 2nd-best sensor (camera) closed from a clear loss to an effective tie.
+
+### Composition-effect investigation, reproduced fresh on trainval
+
+Re-ran the same "merged vs. passthrough" breakdown from the deep-research sections above, this time on trainval's real output, via a standalone re-implementation of `Step_6_Visualization.ipynb`'s `match_predictions_to_ground_truth()` (identical algorithm, just indexed by `sample_id` instead of the official code's full-dict-scan-per-frame, for speed — not a notebook change). **Verified faithful before trusting any breakdown from it**: reproduced the official fused MAE (2.88), RMSE (6.47), Good_pct (55.94), and n_matched_pairs (23,068) exactly.
+
+| Bucket | n | % of matched pairs | MAE |
+|---|---|---|---|
+| Multi-sensor merged | 5,711 | 24.8% | **2.06** — beats every individual sensor, including radar |
+| Passthrough — radar-only | 12,805 | 55.5% | 2.75 |
+| Passthrough — lidar-only | 3,075 | 13.3% | 3.98 |
+| Passthrough — camera_mono-only | 1,477 | 6.4% | 4.90 |
+
+Reconstructs fused's real MAE exactly (`0.248×2.06 + 0.752×3.15 = 2.88`). **The mechanism is the same one already documented on mini, now confirmed at trainval scale, not a new or mini-specific artifact**: fusion works well whenever it actually happens (merged MAE 2.06 beats even radar's own full standalone average of 2.39), but 75.2% of fused's output is single-sensor passthrough, and that passthrough population is measurably worse than the same sensor's own full standalone accuracy (radar-only-within-fused 2.75 vs. radar's standalone 2.39, +15%; lidar-only-within-fused 3.98 vs. lidar's standalone 3.08, +29%; camera_mono-only-within-fused 4.90 vs. camera_mono's standalone 3.63, +35%) — because the cases that DO get corroborated by a second sensor (and land in the accurate merged bucket) are disproportionately the easier ones, leaving each sensor's passthrough bucket disproportionately stuck with its own harder-to-corroborate cases.
+
+**Pending, not yet done**: re-running `v2/eval_l3`'s H1/H6 narrow-slice analysis — the original motivation for this whole migration — against trainval data. Separate v2-pipeline work, not yet scoped.
+
 ## Dependencies
 
 `requirements.txt` pins the working set of libraries: `nuscenes-devkit` (`nuscenes`, `pyquaternion`), `open3d`, `ultralytics` (YOLO), `torch`/`torchvision`, `opencv-python` (`cv2`), `scikit-learn`, `scipy`, `numpy`, `pandas`, `matplotlib`, `tqdm`, `Pillow`. Install with `pip install -r requirements.txt`.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
