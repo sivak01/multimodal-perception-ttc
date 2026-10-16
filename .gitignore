@@ -8,6 +8,7 @@ DATA SET/
 # even for a later "!" pattern.
 output/*
 !output/step_8/
+!output/eval_l3/
 
 # Rendered HTML exports of notebooks (regenerated, not hand-edited)
 html/
@@ -51,6 +52,16 @@ output/step_8/videos/*
 output/step_8/videos_detailed/*
 !output/step_8/videos_detailed/scene-0061.mp4
 !output/step_8/videos_detailed/scene-1077.mp4
+
+# v2/eval_l3 verdict reports — the human-readable H1/H6 findings, kept as
+# real repo documentation. The raw per-key CSVs behind them
+# (fused_enriched_keys.csv, h6_v1_keys.csv, h6_v2_keys.csv, ~178MB
+# combined) stay ignored as regenerable build output, same as every other
+# step's output/ -- only the two small, hand-readable verdict files are
+# un-ignored.
+output/eval_l3/*
+!output/eval_l3/h1_refined_verdict.md
+!output/eval_l3/h6_verdict.md
 
 # Hugging Face Space deployment (its own git remote, not this repo --
 # pushed directly to huggingface.co, holds all 10 scenes' videos)

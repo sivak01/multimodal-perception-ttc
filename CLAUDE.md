@@ -484,7 +484,32 @@ Re-ran the same "merged vs. passthrough" breakdown from the deep-research sectio
 
 Reconstructs fused's real MAE exactly (`0.248×2.06 + 0.752×3.15 = 2.88`). **The mechanism is the same one already documented on mini, now confirmed at trainval scale, not a new or mini-specific artifact**: fusion works well whenever it actually happens (merged MAE 2.06 beats even radar's own full standalone average of 2.39), but 75.2% of fused's output is single-sensor passthrough, and that passthrough population is measurably worse than the same sensor's own full standalone accuracy (radar-only-within-fused 2.75 vs. radar's standalone 2.39, +15%; lidar-only-within-fused 3.98 vs. lidar's standalone 3.08, +29%; camera_mono-only-within-fused 4.90 vs. camera_mono's standalone 3.63, +35%) — because the cases that DO get corroborated by a second sensor (and land in the accurate merged bucket) are disproportionately the easier ones, leaving each sensor's passthrough bucket disproportionately stuck with its own harder-to-corroborate cases.
 
-**Pending, not yet done**: re-running `v2/eval_l3`'s H1/H6 narrow-slice analysis — the original motivation for this whole migration — against trainval data. Separate v2-pipeline work, not yet scoped.
+### H1/H6 re-run against trainval: closing the loop on this migration's original motivation
+
+Ran `python -m v2.eval_l3.run_h1` and `python -m v2.eval_l3.run_h6` against the now-migrated trainval data (`v2/adapters.py` reads `DATA_ROOT`/`NUSCENES_VERSION`/`STEP0-2_DIR` from repo-root `config.py`, already pointed at trainval — zero `v2/eval_l3` code changes needed for the data switch itself). One cosmetic bug found and fixed first: `run_h1.py`'s generated verdict text hardcoded "(up to 10) real scenes" into its bootstrap-methodology sentence; made it compute the real scene count from the built rows (`len({r.scene_id for r in rows})` — prints "85" on trainval) instead of a stale mini-era constant. Both `v2.eval_l3.hypothesis_h1`/`hypothesis_h6`'s core logic needed no changes — `central_tracker.py`'s per-event gating is already bounded by active-track count (not total dataset size), so it scales correctly without the kind of O(n) full-scan bug Step 6's `match_predictions_to_ground_truth()` had.
+
+**H1 (refined): does merged — 2+ sensor corroboration — beat single-sensor, matched on the same GT instance+range bucket?** Every main slice now clears the n≥30 reliability floor comfortably (163-2,345 qualifying groups, vs. mini's 12-45):
+
+| Slice | Hungarian (n=2,094/175/1,057) | Lock-once (n=2,345/163/1,212) |
+|---|---|---|
+| (a) All qualifying groups | **CONFIRMED** — merged 4.83 vs single 5.69, CI [-1.40,-0.36] | **CONFIRMED** — merged 6.00 vs single 7.91, CI [-2.58,-1.25] |
+| (b) In-corridor only | REFUTED — CI [-1.04, 2.55] includes 0 | REFUTED — CI [-1.84, 4.74] includes 0 |
+| (b) GT TTC 0-5s band | REFUTED — CI [-0.50, 0.01], barely includes 0 | **CONFIRMED** — merged 2.14 vs single 2.59, CI [-0.68,-0.23] |
+
+Merged beats single convincingly in aggregate (large n, both bounds, p=0.009/p≈0) — real signal, not mini's guess. But the advantage doesn't hold cleanly in either safety-critical slice this migration was built to test: in-corridor is REFUTED both ways, and the TTC-0-5s band flips with the matching bound (REFUTED optimistic / CONFIRMED pessimistic) — a genuinely mixed, sensitive-to-assumptions result, not a clean win or loss.
+
+**H6: does fully-fused output beat the single best sensor, specifically in the in-corridor+GT-TTC-0-5s band (the pass/fail slice)?** Run separately for v1 (this notebook pipeline) and v2 (the async rebuild), never compared to each other, per the original H6 design:
+
+| Pipeline / bound | Best single sensor | Fused vs. best | 95% CI | n (paired) | Verdict |
+|---|---|---|---|---|---|
+| v2 / Hungarian | camera_mono (1.40) | fused 1.61 (+0.21 worse) | [-0.04, 0.47] | 67 | REFUTED |
+| v2 / lock-once | lidar (1.27) | fused 1.78 (+0.51 worse) | [-0.24, 1.52] | 111 | REFUTED |
+| v1 / Hungarian | radar (0.396) | fused 0.392 (-0.004, ~tie) | [-0.12, 0.11] | 544 | REFUTED |
+| v1 / lock-once | radar (1.044) | fused 1.093 (+0.05 worse) | [-0.54, 0.60] | 579 | REFUTED |
+
+**All four REFUTED, now with real power behind it** (n=67-579 paired keys, vs. mini's n=12-45 that made this exact test INCONCLUSIVE). v1's fused is essentially dead even with radar (diff ≈ -0.004, not a meaningful difference either way); v2's fused trails its own best sensor more visibly, though not at 95% significance in either bound.
+
+**This closes the loop on the whole migration's original motivation.** The honest final answer, now backed by adequate statistical power instead of mini's "too small to tell": blanket fusion does not beat the best individual sensor in the safety-critical zone, in either pipeline, under either matching scheme — consistent with (and now confirming, rather than merely suggesting) every finding already documented above for v1 on mini. Fusion's real, measurable value is in the aggregate/general case (H1 part (a)), not in the narrow safety-critical geometry this project cares most about.
 
 ## Dependencies
 
