@@ -121,9 +121,10 @@ def run():
                   "supplementary stratification slice only, not from the main (a)/(b)/(c) analyses.")
     lines.append("- All thresholds (config_l3.py) are ASSUMED, fixed before any result was computed, "
                   "and were not tuned after seeing these numbers.")
+    n_scenes_seen = len({r.scene_id for r in rows})
     lines.append(f"- Scene-level bootstrap: {cfg.BOOTSTRAP_N_RESAMPLES} resamples, seed {cfg.BOOTSTRAP_SEED}, "
-                  f"{cfg.BOOTSTRAP_CI_PCT}% CI, resampling the (up to 10) real scenes with replacement -- "
-                  "not individual rows -- per this session's own rule 4.")
+                  f"{cfg.BOOTSTRAP_CI_PCT}% CI, resampling the {n_scenes_seen} real scenes present in this "
+                  "dataset with replacement -- not individual rows -- per this session's own rule 4.")
 
     verdict_path = OUT_DIR / "h1_refined_verdict.md"
     verdict_path.write_text("\n".join(lines), encoding="utf-8")
